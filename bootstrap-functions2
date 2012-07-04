@@ -1,0 +1,1363 @@
+# bootstrap-functions
+# 2011 Dave McCormick
+#
+LIBRARY_VERSION="2.8"
+LIBRARY_URL="http://www.practicalclouds.com/content/guide/bootstrap-functions"
+LIBRARY_DOWNLOAD="http://files001.practicalclouds.com/bootstrap-functions2"
+
+WEBPROFILES="files001.practicalclouds.com"
+AWSDOWNLOAD="https://raw.github.com/timkay/aws/master/aws http://files001.practicalclouds.com/aws"
+
+# 1.0  - initial version, with functions 'read_tag' and 'get_file'
+# 1.1  - added set_access which installs certs and s3cfg  
+# 1.2  - set_access wont overwrite existing credentials unless all new credentials are extracted ok
+# 1.3  - added load_data function for installing files and directories from s3 recursively
+#        or by extracting them from an archive file
+#        updated get_file to get files from other buckets if sourcepath includes s3://bucketname
+# 1.4  - added attach_ebsvol which will attach and mount an ebs vol by volid or the tag 'name'
+# 1.5  - added load_profile which will allow profiles to run other profiles and set tags for them
+#        updated read_tag to look for a tag value set in /etc/bootstrap.d/arg-xyz first so that it 
+#        works with load_profile.
+#        Simplifed read_tag by using get_file for checking for tag file
+# 1.6  - Fix get_file when stderr is piped to 1> (send s3cmd output to null)
+#        Fix tag and volume reading in attach_ebsvol (was returning multiple lines)
+# 1.7  - Write the detach_ebsvol script used with attach_ebsvol rather than trying to copy it from S3.
+# 1.8  - Added check_argstag which allows us to specify multiple tags within one 'args' tag.
+#        Improve read_tag to be a little more resilient to failures.
+# 1.9  - change check_argstag_helper to parse_args and use it in load_profile for neater argument passing
+# 1.10 - parse_args becomes args2tags and check_argstag is removed as a function altogether.  Its job
+#        is kept and is run automatically each time the bootstrap-functions are loaded.
+# 1.11 - MAJOR: Convert all functions with optional parameters to take command line style arguments with
+#        -option value syntax and not just rely on the order in which they are passed to the function.
+#        rename attach_ebsvol to mount_ebsvol
+# 1.12 - read_tag: Add removal of tags once they have been read unless -k or -keep is requested.
+# 1.13 - added mount_s3fs, set all variables in functions to be local.
+# 1.14 - added -s option to read_tag so that real tags can be created from default files tags or
+#        arguments in the args tag. e.g. read_tag -t Name -keep -set
+#        Tag names are now case Sensitive - they were all converted to lowercase before.
+# 1.15 - Rewrite of the read_tag function.  Trying to introduce the caching to improve the performance
+#        of the bootstrap process (last test was 8 minutes for a simple drupal profile).
+#        Added the -t|target option to read_tags which allow you to read tags on other objects.
+# 1.16 - Fix incorrect error message in set_access
+# 1.17 - Minor update to reduce get_file and read_tag log verbosity.
+# 1.18 - Correct mount_s3fs having two arguments assigned to -b
+# 1.19 - Added log message to load_profile to say what is being loaded.
+# 1.20 - load_data: automatically strip the destination path from filenames in the archive if they contain it.
+# 1.21 - Added merge_text function, report profile and bootstrap-functions version number when starting...
+# 1.22 - Added reading args from user-data or via an argsfile tag which points to a file on s3 containing the args
+# 1.23 - Alter read_tag to defer deleting tags until the end of the bootstrap process by default unless a -d
+#        is specified.  Tags to delete at end of the process are written to /etc/bootstrap.d/tags2delete
+# 1.24 - Added write_motd and fatal_error functions.
+#        Added a phone home check on the bootstrap-functions and each profile to detect if a newer version
+#        is available and display this in the motd.
+# 1.25 - Add an s3fs mount to the /etc/fstab if it mounts successfully, so that we can umount and remount it
+#        easily after bootstrap.
+# 1.26 - In order to use the fstab we need to install fuse as well as fuse-libs, also copy s3fs binary to 
+#        /usr/local/bin      
+# 1.27 - The version checking was broken, correct by adding the version_lower function which calculates an
+#        int score for each version from its major.minor version string, (major * 1000000)+minor
+#        e.g. 1.21 > 1.9, 1.101 > 1.99, 2.0 > 1.9999
+# 1.28 - Update load_profile to look for profiles on the website when they are not found locally or
+#        in the bootbucket.
+# 1.29 - Correct typo causing syntax error in get_file line 166
+# 1.30 - New twist, allow read_tag function and get_file to still operate without access to ec2 tools or
+#        s3cmd.
+# 1.31 - Allowing things to continue without access to s3 has thrown up issues in get_file where it failed to
+#        download or report an error.
+# 1.32 - Correct small issue with get_file where filename is not reported when there is no access to S3 or
+#        bootbucket.
+#
+# 2.0 -  SIMPLER, EASIER and FASTER
+# 	 * Convert to using 'aws' by Tim Kay, http://timkay.com/aws/
+#        * Automatically install aws script and replace ec2 and s3cmd calls.
+#          EC2-API-Tools, JAVA and s3cmd will no longer be needed by the boot process
+#          and there will be no need of configuring certs, just the access key and secret
+#          key are needed.
+#        * rename read_tag to read_arg and change the -t 'tag name' paramter to -n "name".  This is
+#          because I've decided that using tags for arguments has some limitations which makes it not so
+#          great for passing arguments after all. Do not automatically delete tags or files once they have
+#          been read.  Only look for a tag if the value is not found any other way.
+#        * Rename args2tags to explode_args, to match the rc.local version and remove mention of tags.
+#        * Remove recursive copy from load data (sorry - it is not supported in aws script)
+#        * Add support lz (lzip) and xv (lzma) archives in load_data (give something back)
+#        * mount_s3fs - do not download the s3fs binary from bootbucket, assume that it is in 
+#          the AMI.  Use -c rather than -a to denote a non-standard .awssecret file to use for credentials.
+#        * MAIN, check and automatically install aws script if you can't find it.  Remove the args tag explode.
+# 2.1 -  Yikes, major issue with load_data not working.  It needs to supply a file with s3:// to get_file
+#        even though aws script does not understand the s3:// notation.
+# 2.2 -  Change the paths so that files get downloaded from the S3 backed CDN rather than the website.
+#        This will greatly improve the resiliency of the boot process if I experience issues with the website.
+# 2.3 -  Major error, mount_s3fs can not find s3fs command if in /usr/local/bin
+# 2.4 -  Issues with mount_ebsvol and Fedora 16.  Additional debug logging added and more tests for ok or not.
+# 2.5 -  Fix issue with mount_ebsvol where the volume also has a "snapshotId". Check for this case, split the 
+#        output on |'s.  Try a fix for ebs volume detach script not executing at shutdown (trick is to touch
+#        its /var/lock/subsys file).
+# 2.5.1 - Add fix for CentOS devices starting at /dev/xvde in CentOS!
+# 2.5.2 - Re-lookup the OS_NAME and RELEASE.
+# 2.6	- mount_ebs now writes the detach script into the /etc/init.d/pclouds-cleanup directory to run
+#         at power off with other scripts.
+# 2.7   - Allow set_access to accept a filename beggining s3://bucket/dir/file etc...
+# 2.8   - Install aws to /usr/bin to install, don't install from /etc/bootstrap.d
+
+# Copyright 2011 David McCormick (www.practicalclouds.com)
+# 
+#    Licensed under the Apache License, Version 2.0 (the "License");
+#    you may not use this file except in compliance with the License.
+#    You may obtain a copy of the License at
+# 
+#        http://www.apache.org/licenses/LICENSE-2.0
+# 
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS,
+#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#    See the License for the specific language governing permissions and
+#    limitations under the License.
+#
+
+# get_file
+#  gets a file from the BOOTBUCKET or if not available there will look in /etc/bootstrap-default
+#
+# usage:
+# in: -f|file sourcepath [-d|destination destinationpath] [-c|config s3cfg file]
+# The souce path can include s3://bucketname/xyz 
+# to get a file from somewhere other than the bootbucket.
+# A source path 'abc/xyz/123' is assumed to be a path within the
+# bootbucket.
+# A source path can include a full s3 path, e.g. s3://myotherbucket/file.txt
+# The destination can be specified or will be assumed to be /etc/bootstrap.d
+# return: 0 for success and 1 for failure to get file.
+
+function get_file {
+	local FNAME="get_file"
+        local FILE=""
+        local SCFG="/root/.awssecret"
+	local DEST="/etc/bootstrap.d"
+	local FILENAME=""
+	local CHECK=""
+	local SOURCEPATH=""
+
+        while [[ "$1" != "" ]]
+        do
+                case $1 in
+                        -f|-file)        shift
+                                if [[ "$1" != "" ]]; then
+                                        FILE=$1
+                                        shift
+                                else
+                                        $logger "$FNAME: -f requires a filename or path!"
+                                        return 1
+                                fi
+                                ;;
+                        -c|-config)     shift
+                                if [[ "$1" != "" ]]; then
+                                        SCFG=$1
+                                        shift
+                                else
+                                        $logger "$FNAME: -c requires an awssecret file path as a value!"
+                                        return 1
+                                fi
+                                ;;
+                        -d|-destination) shift
+                                if [[ "$1" != "" ]]; then
+                                        DEST=$1
+                                        shift
+                                else
+                                        $logger "$FNAME: -d requires an a destination path as a value!"
+                                        return 1
+                                fi
+                                ;;
+                        *)      $logger "$FNAME: WARNING! Found an unmatched argument \"$1\""
+                                shift
+                                ;;
+                esac
+        done
+
+	if [[ "$FILE" == "" ]]; then
+		$logger "$FNAME: ERROR: no filename requested!"
+		return 1
+	fi
+	if [[ "$BOOTBUCKET" == "" && -s "/etc/AWS-BOOTBUCKET" ]]; then
+		BOOTBUCKET=`cat /etc/AWS-BOOTBUCKET`
+	fi
+	# sort out if we got a full s3:// path
+	# a bucket/xyz or bucket/xyz/abc/cde/123 etc.
+	# or just a file name
+	if [[ "$FILE" =~ s3:// ]]; then
+		SOURCEPATH="$FILE"
+	else
+		if [[ "$BOOTBUCKET" != "" ]]; then
+			SOURCEPATH="s3://$BOOTBUCKET/$FILE"
+		else
+			# No bootbucket, and full s3 path not specified! Can't download.
+			SOURCEPATH=""
+		fi
+	fi
+
+	FILENAME=${FILE##*/}
+	if [[ "$FILENAME" != "" ]]; then
+		if [[ -d "$DEST" ]]; then
+			CHECK="$DEST/$FILENAME"
+		else
+			CHECK="$DEST"
+		fi
+		if [ -f "$CHECK" ]; then
+			rm -f $CHECK
+		fi
+	fi
+
+	if [[ "$SOURCEPATH" != "" && "$DEST" != "" &&  -s "$SCFG" ]]; then
+		#s3cmd --no-progress --config=$SCFG get $SOURCEPATH $DEST 2>&1 >/dev/null
+		# Replace s3cmd with aws script, remove 's3://' protocol selector from source.
+		SOURCEPATH=${SOURCEPATH#s3://}
+		aws --secrets-file=$SCFG get $SOURCEPATH $DEST 2>&1 >/dev/null
+	fi
+
+       	if [ -s "$CHECK" ]; then
+               	$logger "$FNAME: Saved $SOURCEPATH to $DEST"
+              	return 0
+       	else
+               	rm -f $CHECK
+               	if [ -f "/etc/bootstrap-default/$FILENAME" ]; then
+			cp /etc/bootstrap-default/$FILENAME $DEST
+                       	$logger "$FNAME: Saved /etc/bootstrap-default/$FILENAME to $DEST"
+                       	return 0
+               	else
+                  	$logger "$FNAME: no $FILENAME"
+                    	return 1
+		fi
+        fi
+}
+
+# read_arg
+#  read an argument, either passed via user-data, profile, file in S3 or EC2 tag.
+#  Looks in order of: -
+#  in /etc/bootstrap.d/arg-name (set in user-data or by a profile)
+#  in s3://$BOOTBUCKET/arg-name
+#  in file /etc/bootstrap-default/arg-name
+#
+# -c|config - path to an alternative .awssecret file than /root/.awssecret
+# -s|set - set the argument as an EC2 tag.
+#
+# usage:
+# in: -n|name name [-c|config awssectret] [-s|set] 
+# out: value of parameter
+# return 0 - success, 1 - failed
+
+function read_tag {
+	eval read_arg $@
+}
+
+function read_arg {
+	local FNAME="read_arg"
+	local AVZONE=`cat /etc/AWS-AVZONE`
+	local INSTID=`cat /etc/AWS-INSTID`
+	local ARGNAME=""
+	local KEEP="0";
+	local DELETENOW="0";
+	local SCFG="/root/.awssecret"
+	local ARGVALUE
+	local TAGEXISTS=""
+	local SET="0"
+	local RESULT
+	local TARGET="$INSTID"
+	local TYPE
+	local FOUND="0"
+	
+	while [[ "$1" != "" ]]
+	do
+		case $1 in
+			-n|-name)	shift
+				if [[ "$1" != "" ]]; then
+					ARGNAME=$1
+					shift
+				else 
+					$logger "$FNAME: -n requires a name as value!"
+					return 1
+				fi
+				;;
+			-t|-tag)	shift
+				# Kept for compatability with old profiles
+				if [[ "$1" != "" ]]; then
+					ARGNAME=$1
+					shift
+				else 
+					$logger "$FNAME: -t requires a name as value!"
+					return 1
+				fi
+				;;
+			-c|-config)	shift
+				if [[ "$1" != "" ]]; then
+					SCFG=$1
+					shift
+				else
+					$logger "$FNAME: -c requires a file path as a value!"
+					return 1
+				fi
+				;;
+			-f|-target)	shift
+				# obsolete - reading arguments is only something you do to yourself.
+				if [[ "$1" != "" ]]; then
+					#TARGET=$1
+					shift
+				else
+					$logger "$FNAME: -f requires an target object name."
+					return 1
+				fi
+				;;
+			-k|-keep)	KEEP="1"
+					# Now obsolete - not used.
+				shift
+				;;
+			-d|-deletenow)	DELETENOW="1"
+					# Now obsolete - not used.
+				shift
+				;;
+			-s|-set)	SET="1"
+					# This has been kept so we can set an argument as an ec2 tag
+					# if we want.
+				shift
+				;;
+			*)	$logger "$FNAME: WARNING! Found an unmatched argument \"$1\""	
+				shift
+				;;
+		esac
+	done
+
+	if [[ "$ARGNAME" == "" ]]; then
+		$logger "$FNAME: ERROR: No argument name was specified!"
+		return 1
+	fi
+
+	# Find the value of the argument
+	# look in /etc/bootstrap.d first
+	if [[ -f "/etc/bootstrap.d/arg-$ARGNAME" ]]; then
+		ARGVALUE=`cat /etc/bootstrap.d/arg-$ARGNAME`
+		FOUND="1"
+		$logger "$FNAME: $ARGNAME = \"$ARGVALUE\" from /etc/bootstrap.d/arg-$ARGNAME"
+	else
+		# look for a file in bootbucket or /etc/bootstrap-default
+		get_file -f arg-$ARGNAME -d /etc/bootstrap.d -c $SCFG 2>&1 >/dev/null
+		if [ -s "/etc/bootstrap.d/arg-$ARGNAME" ]; then
+               		ARGVALUE=`cat /etc/bootstrap.d/arg-$ARGNAME`
+               		$logger "$FNAME: $ARGNAME = \"$ARGVALUE\" from file."
+			FOUND="1"
+		fi
+	fi
+
+	# Was the argument found or not?
+	if [[ "$FOUND" == "1" ]]; then
+		echo $ARGVALUE
+		if [[ "$SET" == "1" && -s "$SCFG" ]]; then
+			$logger "$FNAME: set requested - trying to set $ARGNAME as a tag"
+			RESULT=`aws ctags --region ${AVZONE%?} $INSTID --tag "$ARGNAME=$ARGVALUE" 2>&1`
+			if [[ "$?" != "0" ]]; then
+				$logger "$FNAME: I couldn't set EC2 tag $ARGNAME!"
+				$logger "$FNAME: ERROR: $RESULT"
+			else
+				$logger "$FNAME: ok, tag $ARGNAME set to $ARGVALUE"
+			fi
+		fi
+		return 0
+	else
+		$logger "$FNAME: no argument $ARGNAME"
+	fi
+}
+
+# explode_args
+# This function will take a set of arguments in the form a b=c d="e f g" and will write them as files in /etc/bootstrap.d.
+# We do this so that the read_arg function arguments entered via user-data can be overridden by a profile script and the
+# new value used from that point on.
+
+function explode_args {
+	local FNAME="explode_args"
+	local VARNAME
+	local VARVAL
+
+	while [[ "$1" != "" ]]; do
+		if [[ "$1" =~ .*= ]]; then
+			VARNAME=${1%%=*}
+			VARVAL=${1#*=}
+		else
+			VARNAME=$1
+			VARVAL="true"
+		fi
+		$logger "$FNAME: Setting arg $VARNAME to \"$VARVAL\""
+		echo "$VARVAL" >/etc/bootstrap.d/arg-$VARNAME
+		shift
+	done
+}
+
+# load_data
+# Deploy data from archives onto your instance.
+#
+# * The sourcepath can include s3://bucketname so that we can get files from any bucket or the bootbucket is assumed.
+# * If no destination is specified then we will assume the destination is /etc/bootstrap.d.
+# * If the destination does not exist we will create it as a directory.
+# * Once the files are extracted optionally set the ownership on the destination directory to that
+#   specified with -o or -owner
+#
+# NOTE: Sorry, load_data will no longer recursively load data files, aws script doesn't support it and I don't use it.
+#   All data must be stored in and deployed from archives.  Bzip2, gzip and now lzip and lzma archives are supported.
+# 
+# usage:
+# load_data in: -s|source sourcepath [-d|destination destination_directory] [-c|config awssecret] [-o|owner owner[:group]] 
+# return: 0 for success and 1 for failure
+
+function load_data {
+	local FNAME="load_data"
+        local SOURCE=""
+	local OWNER=""
+        local SCFG="/root/.awssecret"
+        local DEST="/etc/bootstrap.d"
+	local ARCHIVEFILE
+	local ARCHIVEPATH
+	local SOURCEPATH
+	local EXISTS
+	local LASTDIR
+	local DATAEXISTS
+	local CURRENTDIR
+
+        while [[ "$1" != "" ]]
+        do
+                case $1 in
+                        -s|-source)        shift
+                                if [[ "$1" != "" ]]; then
+                                        SOURCE=$1
+                                        shift
+                                else
+                                        $logger "$FNAME: -s requires a source path!"
+                                        return 1
+                                fi
+                                ;;
+                        -c|-config)     shift
+                                if [[ "$1" != "" ]]; then
+                                        SCFG=$1
+                                        shift
+                                else
+                                        $logger "$FNAME: -c requires a file path as a value!"
+                                        return 1
+                                fi
+                                ;;
+                        -d|-destination) shift
+                                if [[ "$1" != "" ]]; then
+                                        DEST=$1
+                                        shift
+                                else
+                                        $logger "$FNAME: -d requires an a destination path as a value!"
+                                        return 1
+                                fi
+				;;
+                        -o|-owner) shift
+                                if [[ "$1" != "" ]]; then
+                                        OWNER=$1
+                                        shift
+                                else
+                                        $logger "$FNAME: -o requires an owner[:ownergroup] value!"
+                                        return 1
+                                fi
+                                ;;
+                        *)      $logger "$FNAME: WARNING! Found an unmatched argument \"$1\""
+                                shift
+                                ;;
+                esac
+        done
+
+	if [[ "$SOURCE" == "" ]]; then
+		$logger "$FNAME: requires a source argument!"
+		return 1
+	fi 
+        if [ "$BOOTBUCKET" == "" ]; then
+                BOOTBUCKET=`cat /etc/AWS-BOOTBUCKET`
+        fi
+        # sort out if we got a full s3://bucket path
+        # or just a path within the bootbucket 
+        if [[ "$SOURCE" =~ s3:// ]]; then
+        	SOURCEPATH="${SOURCE}"
+        else
+        	SOURCEPATH="s3://$BOOTBUCKET/${SOURCE}"
+        fi
+
+	$logger "$FNAME: Source=$SOURCEPATH, Destination=$DEST, config=$SCFG Owner=$OWNER"
+	# does the source exist?
+	CHECKPATH=${SOURCEPATH#s3://}	
+	#EXISTS=`s3cmd --config $SCFG ls $SOURCEPATH`
+	#remove s3cmd and replace with aws script	
+	EXISTS=`aws ls $CHECKPATH`
+	if [[ "$EXISTS" == "" ]]; then
+		$logger "$FNAME: ERROR: The source file, $SOURCEPATH, was not found or is inaccessible"
+		$logger "ERROR: $ERROR"
+		return 1
+	fi
+	# check that the destination exists
+	if [ ! -e "$DEST" ]; then
+		mkdir -p $DEST
+	fi
+	ARCHIVE=`echo $SOURCEPATH | grep -E '(tar(\.gz|\.bz2)*|tgz)$'`
+	if [[ "$ARCHIVE" == "" ]]; then
+		$logger "$FNAME: ERROR: Sorry!  I don't recognise the source archive!"
+		return 1
+	else
+		# we have an archive to download an extract
+		# if /data exists then lets download it there temporarily, otherwise use the default (/etc/bootstrap.d)
+		DATAEXISTS=`df -h /data`
+		if [[ "$DATAEXISTS" != "" ]]; then	 
+			ARCHIVEPATH="/data"
+		else
+			ARCHIVEPATH="/etc/bootstrap.d"
+		fi
+		$logger "$FNAME: downloading $SOURCEPATH to $ARCHIVEPATH"
+		get_file -f $SOURCEPATH -d $ARCHIVEPATH -c $SCFG
+		if [[ "$?" == "0" ]]; then
+			ARCHIVEFILE=${SOURCEPATH##*/}
+			# how do I extract it
+			case $SOURCEPATH in
+				*.tar)		LDEXTRACTCMD="--transform \"s,${DEST#/},,\" -xpf"
+						;;
+				*.tar.gz)	LDEXTRACTCMD="--transform \"s,${DEST#/},,\" -xpzf"
+						;;
+				*.tgz)		LDEXTRACTCMD="--transform \"s,${DEST#/},,\" -xpzf"
+						;;
+				*.tar.bz2)	LDEXTRACTCMD="--transform \"s,${DEST#/},,\" -xpjf"
+						;;
+				*.tar.xz|*.tar.lzma)	LDEXTRACTCMD="--lzma --transform \"s,${DEST#/},,\" -xpf"
+						INSTALLED=`rpm -qa xz-lzma-compat`
+						if [[ "$INSTALLED" == "" ]]; then
+							$logger "Installing lzma (.xv) archive support..."
+							yum -y install lzma
+						fi
+						;;
+				*.tar.lz)	LDEXTRACTCMD="--lzip --transform \"s,${DEST#/},,\" -xpf"
+						INSTALLED=`rpm -qa lzip`
+						if [[ "$INSTALLED" == "" ]]; then
+							$logger "Installing lzip (.lz) archive support..."
+							yum -y install lzip
+						fi
+						;;
+				*)		$logger "$FNAME: Error! I couldn't work out what sort of archive $SOURCEPATH is!"
+						rm -f $ARCHIVEPATH/$ARCHIVEFILE
+						return 1
+						;;	
+			esac
+			cd $DEST
+			CURRENTDIR=`pwd`
+			$logger "$FNAME: Extracting archive into $CURRENTDIR..."
+			eval tar $LDEXTRACTCMD $ARCHIVEPATH/$ARCHIVEFILE
+			if [[ "$?" != "0" ]]; then
+				$logger "$FNAME: extract failed : tar $LDEXTRACTCMD $ARCHIVEPATH/$ARCHIVEFILE"
+				rm -f $ARCHIVEPATH/$ARCHIVEFILE
+				return 1
+			else
+				rm -f $ARCHIVEPATH/$ARCHIVEFILE
+			fi
+		else
+			$logger "$FNAME: I couldn't download the archive $SOURCEPATH!"
+			return 1
+		fi
+	fi
+	#everything copied ok from s3 or from archive, set permissions if asked...
+	if [[ "$OWNER" != "" ]]; then
+		chown -R $OWNER $DEST
+		if [[ "$?" != "0" ]]; then
+			$logger "$FNAME: I couldn't set the ownership of $DESTINATION to \"$4\""
+		fi
+	fi
+	return 0
+}
+
+# set_access
+# gets a named user credential file from the bootbucket and then assign it to a user.  Please
+# note that aws script needs only the .awssecret information to operate so the others do not have to 
+# be present (unless you want to set up the other tools for your own use).
+#
+# All items in file are optional and will be installed if present.  These are: -
+#   * EC2 Private key
+#   * EC2 Cert
+#   * s3cmd .s3fcg file
+#   * aws script .awssecret file
+#
+# if no user is specified then 'root' is assumed
+# if an alias is specified then the names of the files are ammended so
+# existing files are not overwritten, e.g. xyzkey.pem, xyzcert.pem and .s3cfg-xyz
+# .awssecret-xyz
+#
+# usage:
+# in : -f|filename filename [-u|user user] [-a|alias name]
+# return: 0 for success and 1 for failure 
+
+function set_access {
+	local FNAME="set_access"
+	local FILE=""
+	local FILENAME=""
+	local USER="root"
+	local ADD=""
+	local HOMEDIR
+	local GROUP
+	local CERTFILE
+	local PKEYFILE
+	local SCFG
+
+        while [[ "$1" != "" ]]
+        do
+                case $1 in
+                        -f|-filename)        shift
+                                if [[ "$1" != "" ]]; then
+                                        FILE=$1
+                                        shift
+                                else
+                                        $logger "$FNAME: -f requires a filename of a credentials file!"
+                                        return 1
+                                fi
+                                ;;
+                        -u|-user) shift
+                                if [[ "$1" != "" ]]; then
+                                        USER=$1
+                                        shift
+                                else
+                                        $logger "$FNAME: -u requires an a username!"
+                                        return 1
+                                fi
+                                ;;
+                        -a|-additional|-alias) shift
+                                if [[ "$1" != "" ]]; then
+                                        ADD=$1
+                                        shift
+                                else
+                                        $logger "$FNAME: -a requires an alias!"
+                                        return 1
+                                fi
+                                ;;
+                        *)      $logger "$FNAME: WARNING! Found an unmatched argument \"$1\""
+                                shift
+                                ;;
+                esac
+        done
+
+        if [[ ! -s "/root/.awssecret" ]]; then
+                $logger "$FNAME: Sorry, I can't execute when the arguments access_key and secret_key are missing! "
+                return 1
+        fi
+
+	if [[ "$FILE" == "" ]]; then
+		$logger "$FNAME: no credentials file was specified!"
+		return 1
+	fi
+	# check if the user exists
+	if [[ "$USER" != "root" ]]; then
+		HOMEDIR=`cat /etc/passwd | grep "^$USER:" | awk -F: '{print $6}'`
+		GROUP=`cat /etc/passwd | grep "^$USER:" | awk -F: '{print $4}'`
+		if [[ "$HOMEDIR" == "" ]]; then
+			$logger "$FNAME: I can't find user $USER"
+			return 1
+		fi
+	else
+		HOMEDIR="/root"
+		GROUP="root"
+	fi
+	# get the credentials file
+	get_file -f $FILE
+	#$logger "Return from get_file is $?"
+	if [[ $? != "0" ]]; then
+		$logger "$FNAME: I couldn't load the credientials file $FILE, sorry!"
+		return 1
+	fi
+	# set destination files
+	if [[ "$ADD" != "" ]]; then
+		CERTFILE="$HOMEDIR/.ec2/${ADD}cert.pem"
+		PKEYFILE="$HOMEDIR/.ec2/${ADD}key.pem"
+		SCFG="$HOMEDIR/.s3cfg-$ADD"
+		AWSSEC="$HOMEDIR/.awssecret-$ADD"
+	else
+		CERTFILE="$HOMEDIR/.ec2/mycert.pem"
+		PKEYFILE="$HOMEDIR/.ec2/mykey.pem"
+		SCFG="$HOMEDIR/.s3cfg"
+		AWSSEC="$HOMEDIR/.awssecret"
+	fi
+
+	# create $HOMEDIR/.ec2 if it doesn't aready exist
+	if [ ! -d "$HOMEDIR/.ec2" ]; then
+		mkdir -p $HOMEDIR/.ec2
+		chown $USER:$GROUP $HOMEDIR/.ec2
+	fi
+
+	# explode the credentials file
+	FILENAME=${FILE##*/}
+	cat /etc/bootstrap.d/$FILENAME | awk '($0 == "-----BEGIN RSA PRIVATE KEY-----"){display=1} (display == 1){print} ($0 == "-----END RSA PRIVATE KEY-----") {display=0}' >/tmp/pk$$
+	if [ ! -s "/tmp/pk$$" ]; then
+	        $logger "$FNAME: no private key"
+	else 
+		$logger "$FNAME: Installing new private key."
+		cp /tmp/pk$$ $PKEYFILE
+		chown $USER:$GROUP $PKEYFILE
+		chmod og-rwx $PKEYFILE
+	fi
+	rm -f /tmp/pk$$
+	
+        cat /etc/bootstrap.d/$FILENAME | awk '($0 == "-----BEGIN CERTIFICATE-----"){display=1} (display == 1){print} ($0 == "-----END CERTIFICATE-----") {display=0}' >/tmp/pc$$
+	if [ ! -s "/tmp/pc$$" ]; then
+	 	$logger "$FNAME: no certificate"
+	else
+		$logger "$FNAME: Installing new cert."
+		cp /tmp/pc$$ $CERTFILE
+		chown $USER:$GROUP $CERTFILE
+		chmod og-rwx $CERTFILE
+	fi
+	rm -f /tmp/pc$$
+
+        cat /etc/bootstrap.d/$FILENAME | awk '($0 == "-----START S3CFG-----"){display=1;getline} ($0 == "-----END S3CFG-----") {display=0} (display == 1){print}' >/tmp/s3$$
+	if [ ! -s "/tmp/s3$$" ]; then
+		$logger "$FNAME: no .s3cfg file"
+	else 
+		$logger "$FNAME: Installing .s3cfg config file"
+		cp /tmp/s3$$ $SCFG
+		chown $USER:$GROUP $SCFG
+		chmod og-rwx $SCFG
+	fi
+	rm -f /tmp/s3$$
+
+        cat /etc/bootstrap.d/$FILENAME | awk '($0 == "-----START AWSSECRET-----"){display=1;getline} ($0 == "-----END AWSSECRET-----") {display=0} (display == 1){print}' >/tmp/awss$$
+	if [ ! -s "/tmp/awss$$" ]; then
+		$logger "$FNAME: no .awssecret file"
+	else 
+		$logger "$FNAME: Installing .awssecret file"
+		cp /tmp/awss$$ $AWSSEC
+		chown $USER:$GROUP $AWSSEC
+		chmod og-rwx $AWSSEC
+	fi
+	rm -f /tmp/awss$$
+
+	return 0
+}
+
+# mount_ebsvol
+# attaches an ebs volume to the instance, either by volumeid or a Name tag.
+# It attaches it to the next available device starting from /dev/xvdb
+# it assumes that an unformated ebs volume should be formated with ext4
+# it will install an detach_ebs script if present in the boot bucket which
+# will detach ebs volumes cleanly as an instance is terminated.
+#
+# usage:
+# mount_ebsvol -n|Name tag-or-volid -m|mount mountpoint.
+
+function mount_ebsvol {
+	local FNAME="mount_ebsvol"
+	local NAME=""
+	local MOUNT=""
+	local VOLID=""
+	local INSTID=`cat /etc/AWS-INSTID`
+	local AVZONE=`cat /etc/AWS-AVZONE`
+	local VOLZONE
+	local INUSE
+	local WHERE
+	local DEVICE
+	local DEVICEEXISTS
+	local CHECKDEVICE
+	local ISATTACHEDYET
+	local FORMATTED
+	local RESULT
+	local DEVICELIST
+	local HASSNAPID
+
+        while [[ "$1" != "" ]]
+        do
+                case $1 in
+                        -n|-name)        shift
+                                if [[ "$1" != "" ]]; then
+                                        NAME=$1
+                                        shift
+                                else
+                                        $logger "$FNAME: -n requires a volume id or tag name as a value!" 
+                                        return 1
+                                fi
+                                ;;
+                        -m|-mount) shift
+                                if [[ "$1" != "" ]]; then
+                                        MOUNT=$1
+                                        shift
+                                else
+                                        $logger "$FNAME: -m requires a mount point as a value!"
+                                        return 1
+                                fi
+                                ;;
+                        *)      $logger "$FNAME: WARNING! Found an unmatched argument \"$1\""
+                                shift
+                                ;;
+                esac
+        done
+
+        if [[ ! -s "/root/.awssecret" ]]; then
+                $logger "$FNAME: Sorry, I can't execute when the arguments access_key and secret_key are missing! "
+                return 1
+        fi
+
+        if [[ "$NAME" == "" ]]; then
+                $logger "$FNAME: no name or volume id was specified!"
+                return 1
+        fi
+        if [[ "$MOUNT" == "" ]]; then
+                $logger "$FNAME: no mount point was specified!"
+                return 1
+        fi
+
+	# find the volumeid that matches my name
+	if [[ "$NAME" =~ vol- ]]; then
+		VOLID=$NAME
+	else
+		$logger "$FNAME: Looking for volume with tag $NAME"
+		#VOLID=`cat /root/tags.txt | awk "(\\\$1 == \"TAG\" && \\\$2 == \"volume\" && \\\$4 ~ /^[nN]ame\\\$/ && \\\$5 == \"$NAME\"){print \\\$3}"`
+		#Replace old ec2-describe tags call with aws script
+		VOLID=`aws dtags --simple --region=${AVZONE%?} | awk "(\\\$2 == \"volume\" && \\\$3 ~ /^[nN]ame\\\$/ && \\\$4 == \"$NAME\"){print \\\$1}" 2>&1`
+		if [[ "$?" != "0" ]]; then
+			$logger "$FNAME: I couldn't read tag information"
+			$logger "$FNAME: $VOLID"
+			VOLID=""
+		fi
+
+		if [[ "$VOLID" =~ vol- ]]; then
+			$logger "$FNAME: ebs volume $VOLID has tag Name=\"$NAME\""
+		else
+			$logger "$FNAME: No volumes with tag Name=\"$NAME\" were found, sorry!"
+			return 1
+		fi
+	fi
+
+	# is it in the right availability zone?
+	local HASSNAPID=`aws dvol --simple --region=${AVZONE%?} | grep "volumeId.*size.*snapshotId.*availabilityZone"`
+	if [[ "$HASSNAPID" == "" ]]; then
+		VOLZONE=`aws dvol --simple --region=${AVZONE%?} | grep $VOLID | awk -F\| '{print $4}' | sed -e 's/^\s*//' | sed -e 's/\s*$//' 2>&1`
+	else
+		VOLZONE=`aws dvol --simple --region=${AVZONE%?} | grep $VOLID | awk -F\| '{print $5}' | sed -e 's/^\s*//' | sed -e 's/\s*$//' 2>&1`
+	fi
+	if [[ "$?" != "0" ]]; then 
+		$logger "$FNAME: ERROR, failed to retrieve a list of volumes!"
+		$logger "$FNAME: ERROR: $VOLZONE" 
+		return 1
+	fi
+
+	if [[ "$VOLZONE" != "$AVZONE" ]]; then
+		$logger "$FNAME: Sorry, I can't attach volume $VOLID because it is in $VOLZONE and I am in $AVZONE!"
+		return 1
+	fi
+		
+	# check if it is already in use
+	if [[ "$HASSNAPID" == "" ]]; then
+		INUSE=`aws dvol --simple --region=${AVZONE%?} | grep $VOLID | awk -F\| '{print $5}' | sed -e 's/^\s*//' | sed -e 's/\s*$//'`
+	else
+		INUSE=`aws dvol --simple --region=${AVZONE%?} | grep $VOLID | awk -F\| '{print $6}' | sed -e 's/^\s*//' | sed -e 's/\s*$//'`
+	fi
+	if [[ "$INUSE" == "in-use" ]]; then
+		WHERE=`aws dvol --simple --region=${AVZONE%?} | grep $VOLID`
+		WHERE=${WHERE#*instanceId=}
+		WHERE=${WHERE%deleteOnTermination*}
+		$logger "$FNAME: I can't attach the database volume as it is already attached to instance $WHERE"
+		return 1
+	else
+		if [[ "$INUSE" == "available" ]]; then
+			# find next available device to mount ebs on
+			$logger "$FNAME: volume ${VOLID} is available"
+			DEVICE=""
+			case $OS_NAME in
+                        	Fedora) 	DEVICELIST="b c d e f g h i j k l m n o p q r s t u v w x y z"
+						;;
+				CentOS)		DEVICELIST="e f g h i j k l m n o p q r s t u v w x y z"       
+						;;
+			esac
+			for CHECKDEVICE in $DEVICELIST
+			do
+				DEVICEEXISTS=`ls -1 /dev/ | grep xvd$CHECKDEVICE`
+				if [[ "$DEVICEEXISTS" == "" ]]; then
+					DEVICE="$CHECKDEVICE"
+					$logger "$FNAME: next available device is /dev/xvd${DEVICE}"
+					break
+				fi
+			done
+
+			if [[ "$DEVICE" == "" ]]; then
+				$logger "$FNAME: I couldn't find an available device to attach the volume to!"
+				return 1
+			fi
+				
+			# attach the volume			
+			#RESULT=`ec2-attach-volume --region ${AVZONE%?} $VOLID -i $INSTID -d /dev/sd$DEVICE 2>&1`
+			$logger "$FNAME: Attaching $VOLID to sd$DEVICE..."
+			$logger "$FNAME: aws attvol --region ${AVZONE%?} -i $INSTID -d /dev/sd$DEVICE $VOLID 2>&1"
+			RESULT=`aws attvol --region ${AVZONE%?} -i $INSTID -d /dev/sd$DEVICE $VOLID 2>&1`
+			if [[ "$?" != "0" ]]; then
+				$logger "$FNAME: Request to attach $VOLID to sd$DEVICE failed!"
+				$logger "$FNAME: ERROR: $RESULT"
+				return 1
+			fi
+			#ISATTACHEDYET=`ec2-describe-volumes --region ${AVZONE%?} | grep "$VOLID" | awk '($1 == "ATTACHMENT"){print $5}'`  
+			ISATTACHEDYET=`aws dvol --simple --region ${AVZONE%?} | grep "$VOLID" | grep "status=attaching"`  
+			while [[ "$ISATTACHEDYET" != "" ]]; do
+				$logger "$FNAME: Waiting for volume $VOLID to attach..."
+				sleep 5
+				ISATTACHEDYET=`aws dvol --simple --region ${AVZONE%?} | grep "$VOLID" | grep "status=attaching"`
+				$logger "$FNAME: $ISATTACHEDYET"
+			done
+
+			ISATTACHEDYET=`aws dvol --simple --region ${AVZONE%?} | grep "$VOLID" | grep "status=attached"`  
+			if [[ "$ISATTACHEDYET" != "" ]]; then
+				#check that the attached volume is formated with a filesystem
+				FORMATTED=`blkid | grep /dev/xvd$DEVICE`
+				if [[ "$FORMATTED" == "" ]]; then
+					$logger "$FNAME: ebs volume $VOLID is unformatted, formating with an ext4 filesystem..."
+					RESULT=`mkfs.ext4 /dev/xvd$DEVICE 2>&1`
+					FORMATTED=`blkid | grep /dev/xvd$DEVICE`
+					if [[ "$FORMATTED" == "" ]]; then
+						$logger "$FNAME: Error, couldn't format the filesystem!" 
+						$logger "$FNAME: $RESULT" 
+						return 1
+					fi
+				fi
+				# mount it
+				if [[ ! -d "$MOUNT" ]]; then
+					mkdir -p $MOUNT
+				fi
+				$logger "$FNAME: Mounting device /dev/xvd${DEVICE} to $MOUNT"
+				$logger "$FNAME: mount -t ext4 /dev/xvd${DEVICE} $MOUNT 2>&1" 
+				RESULT=`mount -t ext4 /dev/xvd$DEVICE $MOUNT 2>&1`
+				if [[ "$?" == "0" ]]; then
+					$logger "$FNAME: mount succeeded."
+					# install the ebs-detach script
+					cat >/etc/init.d/pclouds-cleanup/ebs_detach_xvd${DEVICE} <<EOT
+#!/bin/bash
+#
+# ebs_detach_xvd${DEVICE}
+#
+
+wall "Detaching the EBS Volume xvd${DEVICE}"
+sync
+sync
+umount $MOUNT
+if [[ "\$?" != "0" ]]; then
+	umount -l $MOUNT
+fi
+#ec2-detach-volume -K /root/.ec2/mykey.pem -C /root/.ec2/mycert.pem --region ${AVZONE%?} $VOLID -i $INSTID
+aws detvol --region=${AVZONE%?} $VOLID
+EOT
+					chmod 700 /etc/init.d/pclouds-cleanup/ebs_detach_xvd${DEVICE}
+					# Add lock file so that a kill is attempted and install service.
+					#touch /var/lock/subsys/ebs_detach_xvd${DEVICE}
+					#chkconfig --add ebs_detach_xvd${DEVICE}					
+					$logger "$FNAME: Installed ebs_detach_xvd${DEVICE} cleanup script"
+					return 0
+				else
+					$logger "$FNAME: Volume failed to mount to $MOUNT"
+					$logger "$FNAME: ERROR: $RESULT"
+					return 1
+				fi
+			else
+				$logger "$FNAME: I couldn't attach the volume $VOLID!"
+				return 1
+			fi
+		else
+			$logger "$FNAME: The volume $VOLID is not available!"
+			return 1
+		fi
+	fi
+}
+
+# load_profile
+# loads another profile that wasn't specifically requested in the profiles argument.  The arguments after the profile name
+# are interpreted as args which get set in /etc/bootstrap.d so that you can pass any parameters that the other profile 
+# needs to run.  The arguments must be specified in the format: -
+# a=b c="d e f" g h i=123
+# arguments without values are set to 'true'
+#
+# usage:
+# load_profile $1 [ $2 ]*
+# e.g. load_profile webserver webconfigs=mywebconfigs.tgz webcontent=s3://mywebdatabucket/html
+# It returns the return value of the profile script.
+
+function load_profile {
+	local FNAME="load_profile"
+	local PROFNAME
+
+	$logger "load_profile: $@"
+	if [[ "$1" == "" ]]; then
+		$logger "$FNAME: You didn't give me a profile name, aborting!"
+		return 1
+	fi
+	get_file -f profile-${1}.sh
+        if [ ! -s "/etc/bootstrap.d/profile-${1}.sh" ]; then
+                $logger "Can't find the profile $PROFILE, checking web profiles..."
+                cd /etc/bootstrap.d
+                curl -s -O --fail http://$WEBPROFILES/profile-${1}.sh
+        fi
+	if [[ ! -s "/etc/bootstrap.d/profile-${1}.sh" ]]; then
+		$logger "$FNAME: I can't find profile \"$1\", aborting!"
+		return 1
+	fi
+
+	# lets load the arguments (if any are specified)
+	PROFNAME=$1
+	shift
+	if [[ "$1" != "" ]]; then
+		eval explode_args $@
+	fi
+
+	# now run the profile...
+	echo -e "\033[0;34m> $PROFNAME\033[0;38m" >>/etc/motd
+	chmod +x /etc/bootstrap.d/profile-${PROFNAME}.sh 
+	/etc/bootstrap.d/profile-${PROFNAME}.sh 2>&1 >/var/log/profile-${PROFNAME}.out
+	return $?
+}
+
+
+# mount_s3fs
+# mounts an s3 bucket as filessystem using FUSE module s3fs.  The advantage of s3fs is that your programs
+# do not need to be s3 aware and multiple instances may share the same mounted bucket, which is ideal for 
+# web servers and webcontent.  
+#
+# It will use the details from within your .awssecret file for the S3 access and secret keys, if one isn't
+# specified then it will use /root/.awssecret. Use -c to set which file to use.
+#
+# Note: This function has assumes that a properly compiled version of s3fs is available as part of your AMI.
+#
+# You don't have to mount the s3 bucket with the same user as the one that's used to download the s3fs binary: -
+#   The -c option allows you to specify another .awssecret (default is /root/.awssecret) 
+# are mounting. 
+#   The -o option allows you to set the s3fs options which you want the s3fs mount to have,  For example, if you want
+#   the mount to be accessed via the apache user you would need to set the options uid=49,gid=49.
+#
+#   Some example options: defaults,noatime,allow_other,uid=48,gid=48,use_cache=/tmp,default_acl=public-read,url=http://s3-eu-west-1.amazonaws.com,retries=5,readwrite_timeout=120
+#
+# WARNING: Fedora 14 ships with an ancient version of s3fs, DO NOT USE THIS! Compile your own version
+# see http://www.practicalclouds.com/content/guide/storing-drupal-content-amazon-s3
+#
+# usage:
+# mount_s3fs -b|bucket -m|mount mountpoint [-c|config awssecret file] [-o|options mountoptions_for_s3fs" ] [ -u|uidgid ]
+
+function mount_s3fs {
+	local FNAME="mount_s3fs"
+	local AVZONE=`cat /etc/AWS-AVZONE`
+	local BUCKET=""
+	local MOUNT=""
+	local OPTIONS="intr,noatime,allow_other,use_cache=/tmp,default_acl=public-read,url=http://s3-${AVZONE%?}.amazonaws.com,retries=5,readwrite_timeout=120"
+	local SCFG="/root/.awssecret"
+	local SCMD="s3fs"
+	local FUSEINSTALLED
+	local ACCESSKEY
+	local SECRETKEY
+	local RESULT
+	local UIDGID
+	local MOUNTUID
+	local MOUNTGID
+
+        while [[ "$1" != "" ]]
+        do
+                case $1 in
+                        -b|-bucket)        shift
+                                if [[ "$1" != "" ]]; then
+                                        BUCKET=$1
+                                        shift
+                                else
+                                        $logger "$FNAME: -b requires an s3 bucket name as a value!" 
+                                        return 1
+                                fi
+                                ;;
+                        -m|-mount) shift
+                                if [[ "$1" != "" ]]; then
+                                        MOUNT=$1
+                                        shift
+                                else
+                                        $logger "$FNAME: -m requires a mount point as a value!"
+                                        return 1
+                                fi
+                                ;;
+                        -c|-config) shift
+                                if [[ "$1" != "" ]]; then
+                                        SCFG=$1
+                                        shift
+                                else
+                                        $logger "$FNAME: -c requires a path to an .awssecret file as a value!"
+                                        return 1
+                                fi
+                                ;;
+                        -a|-as) shift
+				# Kept for compatibility - please just use -c
+                                if [[ "$1" != "" ]]; then
+                                        SCFG=$1
+                                        shift
+                                else
+                                        $logger "$FNAME: -a requires a path to an .awssecret file as a value!"
+                                        return 1
+                                fi
+                                ;;
+                        -o|-options) shift
+                                if [[ "$1" != "" ]]; then
+                                        OPTIONS=$1
+                                        shift
+                                else
+                                        $logger "$FNAME: -o requires a mount options list as value. "
+                                        return 1
+                                fi
+				;;
+                        -u|-uidgid) shift
+                                if [[ "$1" != "" ]]; then
+                                        UIDGID=$1
+                                        shift
+                                else
+                                        $logger "$FNAME: -u requires a uid:gid as a value."
+                                        return 1
+                                fi
+                                ;;
+                        *)      $logger "$FNAME: WARNING! Found an unmatched argument \"$1\""
+                                shift
+                                ;;
+                esac
+        done
+
+        if [[ "$BUCKET" == "" ]]; then
+                $logger "$FNAME: no bucket was specified!"
+                return 1
+        fi
+
+        if [[ "$MOUNT" == "" ]]; then
+                $logger "$FNAME: no mount point was specified!"
+                return 1
+        fi
+
+	if [[ "$UIDGID" != "" ]]; then
+		MOUNTUID=${UIDGID%%:*}
+		MOUNTGID=${UIDGID##*:}
+		OPTIONS="$OPTIONS,uid=${MOUNTUID},gid=${MOUNTGID}"
+	fi
+
+	# install fuse-libs if not installed
+	FUSEINSTALLED=`rpm -qa fuse-libs`
+	if [[ "$FUSEINSTALLED" == "" ]]; then
+		yum -y install fuse fuse-libs
+	fi
+
+	$logger "$FNAME: s3fs mounting bucket with $SCFG"
+
+	# get access_key and secret_key	
+	ACCESSKEY=`cat $SCFG | head -1`
+	if [[ "$ACCESSKEY" == "" ]]; then
+		$logger "$FNAME: I couldn't find the s3 access_key from $SCFG, and I can't mount S3 without it!"
+		return 1
+	fi
+
+	SECRETKEY=`cat $SCFG | tail -1`
+	if [[ "$SECRETKEY" == "" ]]; then
+		$logger "$FNAME: I couldn't find the s3 secret_key from $SCFG, and I can't mount S3 without it!"
+		return 1
+	fi
+
+	#add the keys to /etc/passwd-s3fs
+	echo "$BUCKET:$ACCESSKEY:$SECRETKEY" >>/etc/passwd-s3fs
+	chmod 640 /etc/passwd-s3fs
+
+	if [[ -f "/usr/local/bin/s3fs" ]]; then
+		SCMD="/usr/local/bin/s3fs"
+	else
+		SCMD="s3fs"
+	fi
+
+	# mount the s3 bucket using our s3fs
+	RESULT=`$SCMD $BUCKET $MOUNT -o $OPTIONS 2>&1`
+	if [[ "$?" != "0" ]]; then
+		$logger "$FNAME: The s3fs command FAILED! : $STHREEFS $BUCKET $MOUNT -o $OPTIONS"
+		$logger "$FNAME: $RESULT"
+		return 1
+	else
+		$logger "$FNAME: successfully mounted $BUCKET to $MOUNT"
+		# Add the mount to /etc/fstab for easy unmounting and remounting.
+		echo "s3fs#$BUCKET	$MOUNT	fuse	$OPTIONS	0	0" >>/etc/fstab
+	fi
+
+	return 0
+}
+
+# function merge_text: append line or lines of text to a file if it/they are not already present.
+# $1 = destination file $2 $3 $4 $5 etc..  "a line of text"
+function merge_text
+{
+	local FNAME="merge_text"
+	local FILE=$1
+	local FILTER=""
+	local PRESENT=""
+
+	shift
+        if [ -z "$1" ]; then
+                $logger "$FNAME: Missing or empty parameters : file=\"$FILE\" text=\"$1\""
+                return 1
+        fi
+
+	while [ ! -z "$1" ]
+	do
+               	FILTER=`echo "$1" | sed -e 's/\*/\\\*/g'`
+               	PRESENT=`cat $FILE | grep "^$FILTER\$"`
+               	if [ -z "$PRESENT" ]; then
+                       	echo "$1" >>$FILE
+		fi
+		shift
+	done
+}
+
+# function write_motd: append lines of text to the message of the day with optional colour control.
+# The text will be written to a file and then the whole file will be appended to the motd once the bootstrap
+# has completed.  This will alow us to alert users of major failures in the kickstart or inform them that
+# there are new versions of the kickstart scripts available on the website.  Limitation, the function will
+# colour line at a time.  If you want to change colour mid-line, you'll have to add your own colour control characters.  
+# #
+# usage: write_motd "text" colour=red "more text" "text" colour=green "more text"
+function write_motd
+{
+	# colours
+	local RED="31"
+	local GREEN="32"
+	local ORANGE="33"
+	local BLUE="34"
+	local PURPLE="35"
+	local CYAN="36"
+	local CHANGECOLOUR=""
+
+	local CURRENT="$BLUE"
+
+	# Add a blank line before the message.
+	echo "" >>/etc/bootstrap.d/motd
+	echo "" >>/etc/motd
+
+	# write the message and change the colour when asked to do so.
+        while [[ "$1" != "" ]]
+        do
+                case $1 in
+                        colour=*|color=*)  CHANGECOLOUR=${1#*=}
+				case $CHANGECOLOUR in
+					red|RED)	CURRENT="$RED"
+							;;
+					green|GREEN)	CURRENT="$GREEN"
+							;;
+					orange|ORANGE)	CURRENT="$ORANGE"
+							;;
+					blue|BLUE)	CURRENT="$BLUE"
+							;;
+					purple|PURPLE|magenta|MAGENTA)	CURRENT="$PURPLE"
+							;;
+					cyan|CYAN|lightblue|LIGHTBLUE)	CURRENT="$CYAN"
+							;;
+				esac
+				;;
+			*)	echo -e "\033[0;${CURRENT}m$1\033[0;38m" >>/etc/bootstrap.d/motd
+				echo -e "\033[0;${CURRENT}m$1\033[0;38m" >>/etc/motd
+				;;
+		esac
+		shift
+        done
+}
+
+# function fatal_error: provide an easy way of simultaneously writing an error to the syslog and the same message
+# to the /etc/motd in red.
+# usage: fatal_error "It's all gone terribly wrong!"
+function fatal_error
+{
+	local FNAME="fatal_error"
+
+	if [[ "$1" != "" ]]; then
+		$logger "$prog: $1"
+		write_motd colour=red "$prog: $1"
+		shift
+		while [[ "$1" != "" ]]
+		do
+			$logger "$1"
+			write_motd colour=red "$1"
+			shift
+		done
+	else
+		$logger "$FNAME: Error, fatal_error called with no error string!" 
+	fi
+}
+
+# Function version_lower checks if the first version string is lower than the second.
+# Returns 0 for lower or 1 for higher or equal.  Is compatible with if statements...
+# e.g. if version_lower "1.2" "1.21"; then
+#          echo "lower"
+#      else
+#          echo "higher or equal"
+#      fi
+
+function version_lower
+{
+	local FIRST=$1
+	local SECOND=$2
+
+	local FIRSTMAJOR=${FIRST%%.*}
+	local FIRSTMINOR=${FIRST##*.}
+	local FIRSTINT=$(( ($FIRSTMAJOR * 1000000) + $FIRSTMINOR ))
+
+	local SECONDMAJOR=${SECOND%%.*}
+	local SECONDMINOR=${SECOND##*.}
+	local SECONDINT=$(( ($SECONDMAJOR * 1000000) + $SECONDMINOR ))
+
+	# return 0 if true or 1 if false...
+	if (( FIRSTINT < SECONDINT )); then
+		return 0
+	else
+		return 1
+	fi
+}
+
+####################################################################################################################
+# MAIN
+# This runs when the bootstrap-functions are included...
+
+prog=$(basename $0)
+logger="logger -t $prog"
+
+if [[ ! -d "/etc/bootstrap.d" ]]; then
+	mkdir /etc/bootstrap.d
+fi
+
+# lookup some basic info about ourselves
+if [[ -f "/etc/fedora-release" ]]; then
+        OS_NAME="Fedora"
+        OS_VERSION=`cat /etc/fedora-release | head -1 | awk '{print $3}'`
+elif [[ -f "/etc/centos-release" ]]; then
+        OS_NAME="CentOS"
+        OS_VERSION=`cat /etc/centos-release | head -1 | awk '{print $3}'`
+fi
+
+#check aws is installed
+if [[ ! -s "/usr/bin/aws" ]]; then
+	for ATTEMPT in $AWSDOWNLOAD; do
+		$logger "Downloading Tim Kay's AWS from $ATTEMPT..."
+		curl -s -m 20 -o /etc/bootstrap.d/aws $ATTEMPT
+		if [[ -s "/etc/bootstrap.d/aws" ]]; then
+			$logger "Installing AWS."	
+			cp /etc/bootstrap.d/aws /usr/bin
+			perl /usr/bin/aws --install
+			break
+		fi
+	done
+fi
+
+if [[ "$PROFILE_VERSION" != "" ]]; then
+	$logger "Starting $prog version $PROFILE_VERSION (bootstrap-functions version $LIBRARY_VERSION)"
+	# check for possible upgrades for the profile
+	if [[ "$PROFILE_DOWNLOAD" != "" && "$PROFILE_URL" != "" ]]; then
+        	PAVAIL=`curl -s -m 20 $PROFILE_DOWNLOAD | grep "^PROFILE_VERSION="`
+		if [[ "$?" == "0" ]]; then
+        		PAVAIL=${PAVAIL#*\"}
+        		PAVAIL=${PAVAIL%\"*}
+        		if version_lower $PROFILE_VERSION $PAVAIL; then
+				$logger "A newer version of $prog ($PAVAIL) is available at $PROFILE_URL"
+                		write_motd "A newer version of $prog ($PAVAIL) is available at $PROFILE_URL"
+        		fi
+		else
+			$logger "I failed to check the profile version against $PROFILE_DOWNLOAD"
+		fi
+
+		# Check for minimum bootstrap functions met...
+		if [[ "$MINIMUM_BOOTSTRAP_FUNCTIONS" != "" ]]; then
+			if version_lower $LIBRARY_VERSION $MINIMUM_BOOTSTRAP_FUNCTIONS; then
+				fatal_error "ERROR! $prog requires bootstrap-functions version $MINIMUM_BOOTSTRAP_FUNCTIONS or above" "Current version : $LIBRARY_VERSION" "Please download the latest version from $LIBRARY_URL"
+				exit 1
+			fi
+		fi
+	fi
+else
+	$logger "Starting $prog (bootstrap-functions version $LIBRARY_VERSION)"
+fi	
+

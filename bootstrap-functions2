@@ -1,7 +1,7 @@
 # bootstrap-functions
 # 2011 Dave McCormick
 #
-LIBRARY_VERSION="2.8"
+LIBRARY_VERSION="2.9"
 LIBRARY_URL="http://www.practicalclouds.com/content/guide/bootstrap-functions"
 LIBRARY_DOWNLOAD="http://files001.practicalclouds.com/bootstrap-functions2"
 
@@ -98,6 +98,8 @@ AWSDOWNLOAD="https://raw.github.com/timkay/aws/master/aws http://files001.practi
 #         at power off with other scripts.
 # 2.7   - Allow set_access to accept a filename beggining s3://bucket/dir/file etc...
 # 2.8   - Install aws to /usr/bin to install, don't install from /etc/bootstrap.d
+# 2.9   - Fix for inconsistent columns when listing volumes, look for the status column
+#         then the availability zone is the column before.
 
 # Copyright 2011 David McCormick (www.practicalclouds.com)
 # 
@@ -821,12 +823,15 @@ function mount_ebsvol {
 	fi
 
 	# is it in the right availability zone?
-	local HASSNAPID=`aws dvol --simple --region=${AVZONE%?} | grep "volumeId.*size.*snapshotId.*availabilityZone"`
-	if [[ "$HASSNAPID" == "" ]]; then
-		VOLZONE=`aws dvol --simple --region=${AVZONE%?} | grep $VOLID | awk -F\| '{print $4}' | sed -e 's/^\s*//' | sed -e 's/\s*$//' 2>&1`
-	else
-		VOLZONE=`aws dvol --simple --region=${AVZONE%?} | grep $VOLID | awk -F\| '{print $5}' | sed -e 's/^\s*//' | sed -e 's/\s*$//' 2>&1`
-	fi
+	#local HASSNAPID=`aws dvol --simple --region=${AVZONE%?} | grep "volumeId.*size.*snapshotId.*availabilityZone"`
+	#if [[ "$HASSNAPID" == "" ]]; then
+	#	VOLZONE=`aws dvol --simple --region=${AVZONE%?} | grep $VOLID | awk -F\| '{print $4}' | sed -e 's/^\s*//' | sed -e 's/\s*$//' 2>&1`
+	#else
+	#	VOLZONE=`aws dvol --simple --region=${AVZONE%?} | grep $VOLID | awk -F\| '{print $5}' | sed -e 's/^\s*//' | sed -e 's/\s*$//' 2>&1`
+	#fi
+	# Correction to cope with varying columns - look for the status column and then get the availability zone from
+	# the previous one.
+	VOLZONE=`aws dvol --simple --region=${AVZONE%?} | grep $VOLID | awk -F\| '$4 ~ /available|in-use/ {print $3} $5 ~ /available|in-use/ {print $4} $6 ~ /available|in-use/ {print $5}' | sed -e 's/^\s*//' | sed -e 's/\s*$//' 2>&1`
 	if [[ "$?" != "0" ]]; then 
 		$logger "$FNAME: ERROR, failed to retrieve a list of volumes!"
 		$logger "$FNAME: ERROR: $VOLZONE" 

@@ -1,7 +1,7 @@
 # bootstrap-functions
 # 2011 Dave McCormick
 #
-LIBRARY_VERSION="2.9"
+LIBRARY_VERSION="2.10"
 LIBRARY_URL="http://www.practicalclouds.com/content/guide/bootstrap-functions"
 LIBRARY_DOWNLOAD="http://files001.practicalclouds.com/bootstrap-functions2"
 
@@ -100,6 +100,8 @@ AWSDOWNLOAD="https://raw.github.com/timkay/aws/master/aws http://files001.practi
 # 2.8   - Install aws to /usr/bin to install, don't install from /etc/bootstrap.d
 # 2.9   - Fix for inconsistent columns when listing volumes, look for the status column
 #         then the availability zone is the column before.
+# 2.10  - Missed an instance of use of HASSNAPID that I removed in fix 2.9.  Converting that call to
+#         alternative syntax.
 
 # Copyright 2011 David McCormick (www.practicalclouds.com)
 # 
@@ -844,11 +846,12 @@ function mount_ebsvol {
 	fi
 		
 	# check if it is already in use
-	if [[ "$HASSNAPID" == "" ]]; then
-		INUSE=`aws dvol --simple --region=${AVZONE%?} | grep $VOLID | awk -F\| '{print $5}' | sed -e 's/^\s*//' | sed -e 's/\s*$//'`
-	else
-		INUSE=`aws dvol --simple --region=${AVZONE%?} | grep $VOLID | awk -F\| '{print $6}' | sed -e 's/^\s*//' | sed -e 's/\s*$//'`
-	fi
+	#if [[ "$HASSNAPID" == "" ]]; then
+	#	INUSE=`aws dvol --simple --region=${AVZONE%?} | grep $VOLID | awk -F\| '{print $5}' | sed -e 's/^\s*//' | sed -e 's/\s*$//'`
+	#else
+	#	INUSE=`aws dvol --simple --region=${AVZONE%?} | grep $VOLID | awk -F\| '{print $6}' | sed -e 's/^\s*//' | sed -e 's/\s*$//'`
+	#fi
+	INUSE=`aws dvol --simple --region=${AVZONE%?} | grep $VOLID | awk -F\| '$3 ~ /'$VOLZONE'/ {print $4} $4 ~ /'$VOLZONE'/ {print $5} $5 ~ /'$VOLZONE'/ {print $6}' | sed -e 's/^\s*//' | sed -e 's/\s*$//' 2>&1`
 	if [[ "$INUSE" == "in-use" ]]; then
 		WHERE=`aws dvol --simple --region=${AVZONE%?} | grep $VOLID`
 		WHERE=${WHERE#*instanceId=}

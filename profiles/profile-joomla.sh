@@ -2,7 +2,7 @@
 
 # profile-joomla.sh
 # Dave McCormick
-PROFILE_VERSION="2.0"
+PROFILE_VERSION="2.1"
 PROFILE_URL="http://www.practicalclouds.com/content/guide/joomla-web-cms"
 PROFILE_DOWNLOAD="http://files001.practicalclouds.com/profile-joomla.sh"
 MINIMUM_BOOTSTRAP_FUNCTIONS="2.0"
@@ -15,6 +15,7 @@ MINIMUM_BOOTSTRAP_FUNCTIONS="2.0"
 #      - /var/www/html/joomla
 # 1.1  - Fix automatic installer, patch pachage was being downloaded instead of the full one.
 # 2.0  - Update in line with version 2.0 of the boot process.
+# 2.1  - Prevent Alphas and Betas being downloaded.
 
 # Copyright 2011 David McCormick
 # 
@@ -155,7 +156,8 @@ if [[ ! -e "/var/www/html/joomla" ]]; then
 	else
 		$logger "Installing the latest version from joomlacode.org..."
 		cd /etc/bootstrap.d
-		INSTALL=`curl -s http://joomlacode.org/gf/project/joomla/frs | grep -i "Stable-Full" | grep tar.gz | head -1 | sed -r -e 's/^.*href="([^"]+).*$/\1/'`
+		#INSTALL=`curl -s http://joomlacode.org/gf/project/joomla/frs | grep -i "Stable-Full" | grep tar.gz | head -1 | sed -r -e 's/^.*href="([^"]+).*$/\1/'`
+		INSTALL=`curl -s http://joomlacode.org/gf/project/joomla/frs | grep -v -i "alpha" | grep -v -i "beta" | grep -i "Stable-Full" | grep tar.gz | head -1 | sed -r -e 's/^.*href="([^"]+).*$/\1/'`
 		if [[ "$INSTALL" != "" ]]; then
                 	$logger "Downloading latest version, $INSTALL..."
 			# -L tells it to follow redirects

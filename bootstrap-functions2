@@ -1,7 +1,7 @@
 # bootstrap-functions
 # 2011 Dave McCormick
 #
-LIBRARY_VERSION="2.11"
+LIBRARY_VERSION="2.12"
 LIBRARY_URL="http://www.practicalclouds.com/content/guide/bootstrap-functions"
 LIBRARY_DOWNLOAD="http://files001.practicalclouds.com/bootstrap-functions2"
 
@@ -111,6 +111,10 @@ AWSDOWNLOAD="https://raw.github.com/timkay/aws/master/aws http://files001.practi
 #	  secret_key jn6sKRHWyhFet8oOL+jx/nC1WTHRdKcR1Bo66gC9
 #	  -----END CREDENTIALS-----
 #	  The CREDENTIALS section will only be used if a file type is not specifically included
+# 2.12  - Mounts of ebsvols on Centos still not working correctly amazon lables them /dev/sda b etc..
+#         and Centos xvde, f, g etc... To mount a device to /dev/xvdaf you need to attach to device
+#         /dev/sdb.  New fix in mount_ebsvol to match the correct device lables when talking to AWS
+#	  or the local device.
 
 # Copyright 2011 David McCormick (www.practicalclouds.com)
 # 
@@ -868,6 +872,7 @@ function mount_ebsvol {
 	local INUSE
 	local WHERE
 	local DEVICE
+	local AWSDEVICE
 	local DEVICEEXISTS
 	local CHECKDEVICE
 	local ISATTACHEDYET
@@ -979,17 +984,18 @@ function mount_ebsvol {
 			$logger "$FNAME: volume ${VOLID} is available"
 			DEVICE=""
 			case $OS_NAME in
-                        	Fedora) 	DEVICELIST="b c d e f g h i j k l m n o p q r s t u v w x y z"
+                        	Fedora) 	DEVICELIST="a|a b|b c|c d|d e|e f|f g|g h|h i|i j|j k|k l|l m|m"
 						;;
-				CentOS)		DEVICELIST="e f g h i j k l m n o p q r s t u v w x y z"       
+				CentOS)		DEVICELIST="e|a f|b g|c h|d i|e j|f k|g l|h m|i n|j o|k p|l q|m"       
 						;;
 			esac
 			for CHECKDEVICE in $DEVICELIST
 			do
-				DEVICEEXISTS=`ls -1 /dev/ | grep xvd$CHECKDEVICE`
+				DEVICEEXISTS=`ls -1 /dev/ | grep xvd${CHECKDEVICE%|*}`
 				if [[ "$DEVICEEXISTS" == "" ]]; then
-					DEVICE="$CHECKDEVICE"
-					$logger "$FNAME: next available device is /dev/xvd${DEVICE}"
+					DEVICE="${CHECKDEVICE%|*}"
+					AWSDEVICE="${CHECKDEVICE#*|}"
+					$logger "$FNAME: next available device is /dev/sd$AWSDEVICE -> /dev/xvd${DEVICE}"
 					break
 				fi
 			done
@@ -999,13 +1005,13 @@ function mount_ebsvol {
 				return 1
 			fi
 				
-			# attach the volume			
-			#RESULT=`ec2-attach-volume --region ${AVZONE%?} $VOLID -i $INSTID -d /dev/sd$DEVICE 2>&1`
-			$logger "$FNAME: Attaching $VOLID to sd$DEVICE..."
-			$logger "$FNAME: aws attvol --region ${AVZONE%?} -i $INSTID -d /dev/sd$DEVICE $VOLID 2>&1"
-			RESULT=`aws attvol --region ${AVZONE%?} -i $INSTID -d /dev/sd$DEVICE $VOLID 2>&1`
+			# attach the volume - AWSDEVICE			
+			#RESULT=`ec2-attach-volume --region ${AVZONE%?} $VOLID -i $INSTID -d /dev/sd$AWSDEVICE 2>&1`
+			$logger "$FNAME: Attaching $VOLID to sd$AWSDEVICE -> xvd$DEVICE ..."
+			$logger "$FNAME: aws attvol --region ${AVZONE%?} -i $INSTID -d /dev/sd${AWSDEVICE} $VOLID 2>&1"
+			RESULT=`aws attvol --region ${AVZONE%?} -i $INSTID -d /dev/sd${AWSDEVICE} $VOLID 2>&1`
 			if [[ "$?" != "0" ]]; then
-				$logger "$FNAME: Request to attach $VOLID to sd$DEVICE failed!"
+				$logger "$FNAME: Request to attach $VOLID to sd${AWSDEVICE} failed!"
 				$logger "$FNAME: ERROR: $RESULT"
 				return 1
 			fi
@@ -1059,9 +1065,6 @@ fi
 aws detvol --region=${AVZONE%?} $VOLID
 EOT
 					chmod 700 /etc/init.d/pclouds-cleanup/ebs_detach_xvd${DEVICE}
-					# Add lock file so that a kill is attempted and install service.
-					#touch /var/lock/subsys/ebs_detach_xvd${DEVICE}
-					#chkconfig --add ebs_detach_xvd${DEVICE}					
 					$logger "$FNAME: Installed ebs_detach_xvd${DEVICE} cleanup script"
 					return 0
 				else

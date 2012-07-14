@@ -1,7 +1,7 @@
 # bootstrap-functions
 # 2011 Dave McCormick
 #
-LIBRARY_VERSION="2.10"
+LIBRARY_VERSION="2.11"
 LIBRARY_URL="http://www.practicalclouds.com/content/guide/bootstrap-functions"
 LIBRARY_DOWNLOAD="http://files001.practicalclouds.com/bootstrap-functions2"
 
@@ -102,6 +102,15 @@ AWSDOWNLOAD="https://raw.github.com/timkay/aws/master/aws http://files001.practi
 #         then the availability zone is the column before.
 # 2.10  - Missed an instance of use of HASSNAPID that I removed in fix 2.9.  Converting that call to
 #         alternative syntax.
+# 2.11  - Add setting 'FOG' credentials to set_access.  Create a new --BEGIN CREDENTIALS--- section
+#         which can be used to create s3cmd, aws and fog credentials files from a single access key
+#         and secret key - preventing the need of creating a config file for each.
+#         e.g.
+#	  -----BEGIN CREDENTIALS-----
+#         access_key AKIAIAKF4TCXGGWZUSIA
+#	  secret_key jn6sKRHWyhFet8oOL+jx/nC1WTHRdKcR1Bo66gC9
+#	  -----END CREDENTIALS-----
+#	  The CREDENTIALS section will only be used if a file type is not specifically included
 
 # Copyright 2011 David McCormick (www.practicalclouds.com)
 # 
@@ -578,11 +587,20 @@ function load_data {
 #   * EC2 Cert
 #   * s3cmd .s3fcg file
 #   * aws script .awssecret file
+#   * FOG (Ruby) .fog file
 #
 # if no user is specified then 'root' is assumed
 # if an alias is specified then the names of the files are ammended so
 # existing files are not overwritten, e.g. xyzkey.pem, xyzcert.pem and .s3cfg-xyz
 # .awssecret-xyz
+#
+# You can now specify a default style credential which will create .s3cfg, .awssecret and
+# .fog files for you without specifying them individually.
+# -----BEGIN CREDENTIALS-----
+# access_key AKIAIAKF4TCXGGWZUSIA
+# secret_key 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
+# -----END CREDENTIALS-----
+# The CREDENTIALS section will only be used if a file type is not specifically included
 #
 # usage:
 # in : -f|filename filename [-u|user user] [-a|alias name]
@@ -599,6 +617,9 @@ function set_access {
 	local CERTFILE
 	local PKEYFILE
 	local SCFG
+	local FOG=""
+	local GLOBALACCESS=""
+	local GLOBALSECRET=""
 
         while [[ "$1" != "" ]]
         do
@@ -670,11 +691,13 @@ function set_access {
 		PKEYFILE="$HOMEDIR/.ec2/${ADD}key.pem"
 		SCFG="$HOMEDIR/.s3cfg-$ADD"
 		AWSSEC="$HOMEDIR/.awssecret-$ADD"
+		FOG="$HOMEDIR/.fog-$ADD"
 	else
 		CERTFILE="$HOMEDIR/.ec2/mycert.pem"
 		PKEYFILE="$HOMEDIR/.ec2/mykey.pem"
 		SCFG="$HOMEDIR/.s3cfg"
 		AWSSEC="$HOMEDIR/.awssecret"
+		FOG="$HOMEDIR/.fog"
 	fi
 
 	# create $HOMEDIR/.ec2 if it doesn't aready exist
@@ -685,6 +708,20 @@ function set_access {
 
 	# explode the credentials file
 	FILENAME=${FILE##*/}
+
+	# Look for the global access key and secret key fields first
+	cat /etc/bootstrap.d/$FILENAME | awk '($0 == "-----BEGIN CREDENTIALS-----"){display=1} (display == 1){print} ($0 == "-----END CREDENTIALS-----") {display=0}' >/tmp/access$$
+	if [ ! -s "/tmp/access$$" ]; then
+	        $logger "$FNAME: WARNING: no CREDENTIALS section in the credentials file, will install specific config files only."
+	else 
+		GLOBALACCESS=`cat /tmp/access$$ | grep "^access_key" | awk '{print $2}'`
+		GLOBALSECRET=`cat /tmp/access$$ | grep "^secret_key" | awk '{print $2}'`
+		if [[ "$GLOBALACCESS" != "" && "$GLOBALSECRET" != "" ]]; then
+			$logger "$FNAME: Found a global access_key and secret_key to use to create .s3cfg, .awssecret and .fog files"
+		fi
+	fi
+	rm -f /tmp/access$$
+
 	cat /etc/bootstrap.d/$FILENAME | awk '($0 == "-----BEGIN RSA PRIVATE KEY-----"){display=1} (display == 1){print} ($0 == "-----END RSA PRIVATE KEY-----") {display=0}' >/tmp/pk$$
 	if [ ! -s "/tmp/pk$$" ]; then
 	        $logger "$FNAME: no private key"
@@ -709,9 +746,53 @@ function set_access {
 
         cat /etc/bootstrap.d/$FILENAME | awk '($0 == "-----START S3CFG-----"){display=1;getline} ($0 == "-----END S3CFG-----") {display=0} (display == 1){print}' >/tmp/s3$$
 	if [ ! -s "/tmp/s3$$" ]; then
-		$logger "$FNAME: no .s3cfg file"
+		$logger "$FNAME: no .s3cfg file in credentials file"
+		if [[ "$GLOBALACCESS" != "" && "$GLOBALSECRET" != "" ]]; then
+			$logger "Setting the .s3cfg file from the global keys..."
+			cat >$SCFG <<EOT
+[default]
+access_key = $GLOBALACCESS
+acl_public = False
+bucket_location = US
+cloudfront_host = cloudfront.amazonaws.com
+cloudfront_resource = /2008-06-30/distribution
+default_mime_type = binary/octet-stream
+delete_removed = False
+dry_run = False
+encoding = UTF-8
+encrypt = False
+force = False
+get_continue = False
+gpg_command = /usr/bin/gpg
+gpg_decrypt = %(gpg_command)s -d --verbose --no-use-agent --batch --yes --passphrase-fd %(passphrase_fd)s -o %(output_file)s %(input_file)s
+gpg_encrypt = %(gpg_command)s -c --verbose --no-use-agent --batch --yes --passphrase-fd %(passphrase_fd)s -o %(output_file)s %(input_file)s
+gpg_passphrase = battlestar
+guess_mime_type = True
+host_base = s3.amazonaws.com
+host_bucket = %(bucket)s.s3.amazonaws.com
+human_readable_sizes = False
+list_md5 = False
+preserve_attrs = True
+progress_meter = True
+proxy_host = 
+proxy_port = 0
+recursive = False
+recv_chunk = 4096
+secret_key = $GLOBALSECRET
+send_chunk = 4096
+simpledb_host = sdb.amazonaws.com
+skip_existing = False
+urlencoding_mode = normal
+use_https = False
+verbosity = WARNING
+EOT		
+			chown $USER:$GROUP $SCFG
+			chmod og-rwx $SCFG
+		else
+			$logger "$FNAME: Not creating a .s3cfg file."
+		fi
 	else 
-		$logger "$FNAME: Installing .s3cfg config file"
+		$logger "$FNAME: Installing .s3cfg config file from credentials file"
 		cp /tmp/s3$$ $SCFG
 		chown $USER:$GROUP $SCFG
 		chmod og-rwx $SCFG
@@ -720,14 +801,48 @@ function set_access {
 
         cat /etc/bootstrap.d/$FILENAME | awk '($0 == "-----START AWSSECRET-----"){display=1;getline} ($0 == "-----END AWSSECRET-----") {display=0} (display == 1){print}' >/tmp/awss$$
 	if [ ! -s "/tmp/awss$$" ]; then
-		$logger "$FNAME: no .awssecret file"
+		$logger "$FNAME: no .awssecret file in credentials file"
+                if [[ "$GLOBALACCESS" != "" && "$GLOBALSECRET" != "" ]]; then
+                        $logger "Setting the .awssecret file from the global keys..."
+                        cat >$AWSSEC <<EOT
+$GLOBALACCESS
+$GLOBALSECRET
+EOT
+			chown $USER:$GROUP $AWSSEC
+			chmod og-rwx $AWSSEC
+		else
+			$logger "$FNAME: Not creating a .awssecret file."
+		fi
 	else 
-		$logger "$FNAME: Installing .awssecret file"
+		$logger "$FNAME: Installing .awssecret file from credentials file"
 		cp /tmp/awss$$ $AWSSEC
 		chown $USER:$GROUP $AWSSEC
 		chmod og-rwx $AWSSEC
 	fi
 	rm -f /tmp/awss$$
+
+        cat /etc/bootstrap.d/$FILENAME | awk '($0 == "-----START FOG-----"){display=1;getline} ($0 == "-----END FOG-----") {display=0} (display == 1){print}' >/tmp/fog$$
+	if [ ! -s "/tmp/fog$$" ]; then
+		$logger "$FNAME: no .fog file in credentials file "
+                if [[ "$GLOBALACCESS" != "" && "$GLOBALSECRET" != "" ]]; then
+                        $logger "Setting the .fog file from the global keys..."
+                        cat >$FOG <<EOT
+:default:
+  :aws_access_key_id: $GLOBALACCESS
+  :aws_secret_access_key: $GLOBALSECRET
+EOT
+			chown $USER:$GROUP $FOG
+			chmod og-rwx $FOG
+		else
+			$logger "$FNAME: Not creating a .fog file."
+		fi
+	else 
+		$logger "$FNAME: Installing .fog file from credentials file"
+		cp /tmp/fog$$ $FOG
+		chown $USER:$GROUP $FOG
+		chmod og-rwx $FOG
+	fi
+	rm -f /tmp/fog$$
 
 	return 0
 }

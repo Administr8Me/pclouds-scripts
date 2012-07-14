@@ -3,7 +3,7 @@
 # 2011 Dave McCormick
 
 PROFILE_NAME="rc.local"
-PROFILE_VERSION="2.18"
+PROFILE_VERSION="2.19"
 PROFILE_URL="http://www.practicalclouds.com/content/guide/extended-cloud-boot-rclocal"
 PROFILE_DOWNLOAD="files001.practicalclouds.com/rc.local.sh"
 MINIMUM_BOOTSTRAP_FUNCTIONS="2.0"
@@ -98,6 +98,8 @@ AWSDOWNLOAD="https://raw.github.com/timkay/aws/master/aws http://files001.practi
 #        trying to download it from puppetforge. Fix puppet apply command.
 # 2.18 - Copy aws to /usr/bin before running install!  Prevent all of the symlinks 
 #        to /etc/bootstrap.d
+# 2.19 - Add /root/.fog credentials by default if we have an access key and 
+#        secret key
 
 # The www.practicalclouds.com bootstrap process
 # for futher details please visit the website
@@ -337,9 +339,22 @@ fi
 if [[ "$AWS_ACCESS_KEY_ID"  == "" || "$AWS_SECRET_ACCESS_KEY" == "" ]]; then
 	$logger "I can't access AWS API functions or S3 without access keys!"
 else 
+	# Here we are setting up credentials files for the three different
+	# AWS APIs/Command line tools, aws, boto and fog
+	# We should try to phase others out in favour of just one.
+	# FOG seems to most likely candidate to me at present.
+
+	# Write the .awsecret file
 	echo "$AWS_ACCESS_KEY_ID" >/root/.awssecret
 	echo "$AWS_SECRET_ACCESS_KEY" >>/root/.awssecret
 	chmod 600 /root/.awssecret
+	# Write the .fog file
+	cat >/root/.fog <<EOT
+:default:
+  :aws_access_key_id: $AWS_ACCESS_KEY_ID
+  :aws_secret_access_key: $AWS_SECRET_ACCESS_KEY
+EOT
+	chmod 600 /root/.fog
 	# export these for use with boto (for Route53)
 	export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
 fi

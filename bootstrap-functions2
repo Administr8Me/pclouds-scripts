@@ -1,11 +1,11 @@
 # bootstrap-functions
 # 2011 Dave McCormick
 #
-LIBRARY_VERSION="2.12"
+LIBRARY_VERSION="2.13"
 LIBRARY_URL="http://www.practicalclouds.com/content/guide/bootstrap-functions"
 LIBRARY_DOWNLOAD="http://files001.practicalclouds.com/bootstrap-functions2"
 
-WEBPROFILES="files001.practicalclouds.com"
+WEBPROFILES="pclouds-cloudfront.s3.amazonaws.com"
 AWSDOWNLOAD="https://raw.github.com/timkay/aws/master/aws http://files001.practicalclouds.com/aws"
 
 # 1.0  - initial version, with functions 'read_tag' and 'get_file'
@@ -115,6 +115,7 @@ AWSDOWNLOAD="https://raw.github.com/timkay/aws/master/aws http://files001.practi
 #         and Centos xvde, f, g etc... To mount a device to /dev/xvdaf you need to attach to device
 #         /dev/sdb.  New fix in mount_ebsvol to match the correct device lables when talking to AWS
 #	  or the local device.
+# 2.13  - Download profiles etc from S3 directly not Cloudfront with it's overzealous caching.
 
 # Copyright 2011 David McCormick (www.practicalclouds.com)
 # 

@@ -2,7 +2,7 @@
 
 # profile-common.sh
 # Dave McCormick
-PROFILE_VERSION="2.2"
+PROFILE_VERSION="2.3"
 PROFILE_URL="http://www.practicalclouds.com/content/guide/common"
 PROFILE_DOWNLOAD="http://files001.practicalclouds.com/profile-common.sh"
 MINIMUM_BOOTSTRAP_FUNCTIONS="2.0"
@@ -22,6 +22,8 @@ MINIMUM_BOOTSTRAP_FUNCTIONS="2.0"
 #       the CDN for files.
 # 2.1 - Update: in CentOS6 the drive is xvde and not xvda
 # 2.2 - Make compatible with Fedora 17 version of fdisk
+# 2.3 - Fix, make sure vim continues to install after strange
+#       rpm dependency issue.
 
 # Copyright 2011 David McCormick
 # 
@@ -87,7 +89,8 @@ service crond restart
 
 #add yum plugin so that it checks for the fastest repository mirror...
 $logger "Installing yum-plugin-fastestmirror.noarch"
-yum -y install yum-plugin-fastestmirror.noarch vim
+yum -y remove vim-minimal
+yum -y install yum-plugin-fastestmirror.noarch vim sudo
 
 # Set vim for all users
 cat >/etc/profile.d/vim.sh <<EOT

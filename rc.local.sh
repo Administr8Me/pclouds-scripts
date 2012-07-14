@@ -5,10 +5,10 @@
 PROFILE_NAME="rc.local"
 PROFILE_VERSION="2.19"
 PROFILE_URL="http://www.practicalclouds.com/content/guide/extended-cloud-boot-rclocal"
-PROFILE_DOWNLOAD="files001.practicalclouds.com/rc.local.sh"
+PROFILE_DOWNLOAD="pclouds-cloudfront.s3.amazonaws.com/rc.local.sh"
 MINIMUM_BOOTSTRAP_FUNCTIONS="2.0"
 
-WEBPROFILES="files001.practicalclouds.com"
+WEBPROFILES="pclouds-cloudfront.s3.amazonaws.com"
 AWSDOWNLOAD="https://raw.github.com/timkay/aws/master/aws http://files001.practicalclouds.com/aws"
 
 # 1.0  - initial version

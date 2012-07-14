@@ -3,7 +3,7 @@
 #
 LIBRARY_VERSION="2.13"
 LIBRARY_URL="http://www.practicalclouds.com/content/guide/bootstrap-functions"
-LIBRARY_DOWNLOAD="http://files001.practicalclouds.com/bootstrap-functions2"
+LIBRARY_DOWNLOAD="http://pclouds-cloudfront.s3.amazonaws.com/bootstrap-functions2"
 
 WEBPROFILES="pclouds-cloudfront.s3.amazonaws.com"
 AWSDOWNLOAD="https://raw.github.com/timkay/aws/master/aws http://files001.practicalclouds.com/aws"

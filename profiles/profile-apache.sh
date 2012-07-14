@@ -2,7 +2,7 @@
 
 # profile-webserver.sh
 # Dave McCormick
-PROFILE_VERSION="2.10"
+PROFILE_VERSION="2.11"
 PROFILE_URL="http://www.practicalclouds.com/content/guide/apache-webserver"
 PROFILE_DOWNLOAD="http://files001.practicalclouds.com/profile-apache.sh"
 MINIMUM_BOOTSTRAP_FUNCTIONS="2.0"
@@ -51,6 +51,8 @@ MINIMUM_BOOTSTRAP_FUNCTIONS="2.0"
 # 2.9  - Add extra information about choice of backups files.
 # 2.10 - Turn off 'globbing' so that the backup schedule works properly
 #      - Add instance name to the default backup file names,
+# 2.11 - If mounting a webvol make sure that the cgi-bin, error, html, icons
+#        are created
 
 # Copyright 2011 David McCormick
 # 
@@ -234,6 +236,8 @@ if [[ "$WEBVOL" != "" ]]; then
 	if [[ "$?" != "0" ]]; then
 		fatal_error "I couldn't attach my web data volume, $WEBVOL - aborting...!"
 		exit 1
+	else
+		mkdir -p /var/www/{cgi-bin,error,html,icons}
 	fi
 else
 	$logger "We have not been requested to mount an EBS volume for the webcontent"

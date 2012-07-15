@@ -1,7 +1,7 @@
 # bootstrap-functions
 # 2011 Dave McCormick
 #
-LIBRARY_VERSION="2.13"
+LIBRARY_VERSION="2.14"
 LIBRARY_URL="http://www.practicalclouds.com/content/guide/bootstrap-functions"
 LIBRARY_DOWNLOAD="http://pclouds-cloudfront.s3.amazonaws.com/bootstrap-functions2"
 
@@ -116,6 +116,7 @@ AWSDOWNLOAD="https://raw.github.com/timkay/aws/master/aws http://files001.practi
 #         /dev/sdb.  New fix in mount_ebsvol to match the correct device lables when talking to AWS
 #	  or the local device.
 # 2.13  - Download profiles etc from S3 directly not Cloudfront with it's overzealous caching.
+# 2.14  - Fix .s3cfg section not getting picked up correctly in set_access
 
 # Copyright 2011 David McCormick (www.practicalclouds.com)
 # 
@@ -754,7 +755,7 @@ function set_access {
 		$logger "$FNAME: no .s3cfg file in credentials file"
 		if [[ "$GLOBALACCESS" != "" && "$GLOBALSECRET" != "" ]]; then
 			$logger "Setting the .s3cfg file from the global keys..."
-			cat >$SCFG <<EOT
+			cat >$SCFG <<SCFGEND
 [default]
 access_key = $GLOBALACCESS
 acl_public = False
@@ -790,7 +791,7 @@ skip_existing = False
 urlencoding_mode = normal
 use_https = False
 verbosity = WARNING
-EOT		
+SCFGEND
 			chown $USER:$GROUP $SCFG
 			chmod og-rwx $SCFG
 		else

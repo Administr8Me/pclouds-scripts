@@ -2,7 +2,7 @@
 
 # profile-joomla.sh
 # Dave McCormick
-PROFILE_VERSION="2.1"
+PROFILE_VERSION="2.3"
 PROFILE_URL="http://www.practicalclouds.com/content/guide/joomla-web-cms"
 PROFILE_DOWNLOAD="http://files001.practicalclouds.com/profile-joomla.sh"
 MINIMUM_BOOTSTRAP_FUNCTIONS="2.0"
@@ -16,6 +16,8 @@ MINIMUM_BOOTSTRAP_FUNCTIONS="2.0"
 # 1.1  - Fix automatic installer, patch pachage was being downloaded instead of the full one.
 # 2.0  - Update in line with version 2.0 of the boot process.
 # 2.1  - Prevent Alphas and Betas being downloaded.
+# 2.2  - Change the locations for tmp and logs
+# 2.3  - Correct the admin password SQL to account for database change in 2.5.6
 
 # Copyright 2011 David McCormick
 # 
@@ -196,6 +198,8 @@ if [[ ! -e "/var/www/html/joomla" ]]; then
 		DBPREFIX=`rand 6`
 		sed -e "s/public *\$dbprefix *= *'[a-zA-Z0-9_]*' *;/public \$dbprefix = '${DBPREFIX}_';/" -i /var/www/html/joomla/configuration.php
 		sed -e "s/public *\$root_user *= *'[0-9]*' *;/\/* public \$root_user = '42'; *\//" -i /var/www/html/joomla/configuration.php
+		sed -e "s/public *\$tmp_path *= *.*;/public \$tmp_path = '\/var\/www\/html\/joomla\/tmp';/" -i /var/www/html/joomla/configuration.php
+		sed -e "s/public *\$log_path *= *.*;/public \$log_path = '\/var\/www\/html\/joomla\/logs';/" -i /var/www/html/joomla/configuration.php
 		# turn off output buffering.
 		sed -e 's/ *output_buffering *=.*/output_buffering = off/' -i /etc/php.ini
 
@@ -219,7 +223,7 @@ if [[ ! -e "/var/www/html/joomla" ]]; then
 		$logger "Adding an admin user with default password, please change!"
 		mysql -u$DBUSER -p$DBPASS $DBNAME <<EOT
 INSERT INTO \`${DBPREFIX}_users\` VALUES
-(42, 'Super User', 'admin', 'email@dot.com', 'c3a7f3b22068a79c8ded2248c22a90a9:kbcOu1cpEjVphxJMkB5PcuDBLYfLvtz6', 'deprecated', 0, 1, '2011-01-13 12:09:00', '2011-01-14 08:43:24', '', '');
+(42, 'Super User', 'admin', 'email@dot.com', 'c3a7f3b22068a79c8ded2248c22a90a9:kbcOu1cpEjVphxJMkB5PcuDBLYfLvtz6', 'deprecated', 0, 1, '2011-01-13 12:09:00', '2011-01-14 08:43:24', '', '', '0000-00-00 00:00:00', 0 );
 INSERT INTO \`${DBPREFIX}_user_usergroup_map\` VALUES (42,8);
 EOT
 
